@@ -230,11 +230,12 @@ client_sockets = {}
 
 #correctly process disconnection and close socket
 def handleDisconnection(client: socket):
-    logging.warning(f"[!] Disconnecting client {client}")
-    
+
     if not client in client_sockets:
-        logging.error("    Disconnection for removed socket")
+        logging.critical("[!] Disconnection for removed socket")
         return
+
+    logging.warning(f"[!] Disconnecting client {client_sockets[client].address}")
 
     sender = client_sockets[client]
     #cleanup room
@@ -297,7 +298,8 @@ def sendCommonInfo(client: socket):
 
 def updateRooms():
     for s in client_sockets.keys():
-        sendRooms(s)
+        if client_sockets[s].isLobby():
+            sendRooms(s)
 
 
 def deleteRoom(room: Room):
@@ -483,7 +485,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         logging.info(f"[*] {sender.address} autorized as {tag_value}")
         sender.client.username = tag_value
         #sending info that someone here before authorizing - to not send it to itself
-        targetClients = [i for i in client_sockets.keys() if not client_sockets[i].client.joined]
+        targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and not client_sockets[i].client.joined]
         message = f":>>MSG:{SYSUSER}:{sender.client.username} is here"
         broadcast(targetClients, message)
         #authorizing user
@@ -502,7 +504,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         if sender.client.joined:
             broadcast(sender.client.room.players, message) #send message only to players in the room
         else:
-            targetClients = [i for i in client_sockets.keys() if not client_sockets[i].client.joined]
+            targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and not client_sockets[i].client.joined]
             broadcast(targetClients, message)
 
     #new room
