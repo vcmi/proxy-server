@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.2"
+PROXYSERVER_VERSION = "0.2.1"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 1
@@ -217,7 +217,8 @@ s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind((SERVER_HOST, SERVER_PORT))
 # listen for upcoming connections
 s.listen(MAX_CONNECTIONS)
-logging.critical(f"[*] Listening as {SERVER_HOST}:{SERVER_PORT}")
+logging.info("=============================================")
+logging.info(f"[!] Listening as {SERVER_HOST}:{SERVER_PORT}")
 
 # active rooms
 rooms = {}
@@ -232,10 +233,10 @@ client_sockets = {}
 def handleDisconnection(client: socket):
 
     if not client in client_sockets:
-        logging.critical("[!] Disconnection for removed socket")
+        logging.warning("[!] Disconnection for removed socket")
         return
 
-    logging.warning(f"[!] Disconnecting client {client_sockets[client].address}")
+    logging.info(f"[!] Disconnecting {client_sockets[client].address}")
 
     sender = client_sockets[client]
     #cleanup room
@@ -255,13 +256,15 @@ def handleDisconnection(client: socket):
     #cleanup session
     if sender.isPipe() and sender.client.auth:
         if sender.client.session in sessions:
+            logging.info(f"[S {sender.client.session.name}]: Remove {sender.client.apptype}")
             sender.client.session.removeConnection(client)
             if not len(sender.client.session.connections):
-                logging.warning(f"[*] Destroying session {sender.client.session.name}")
+                logging.info(f"[S {sender.client.session.name}] Destroying session")
                 sessions.remove(sender.client.session)
 
     client.close()
     client_sockets.pop(client)
+    logging.debug(f"---- disconnected")
 
 
 #sending message for lobby players
@@ -292,7 +295,7 @@ def sendRooms(client: socket):
 def sendCommonInfo(client: socket):
     lobby_users = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and client_sockets[i].client.auth]
     play_users = [i for i in client_sockets.keys() if client_sockets[i].isPipe()]
-    msg = f":>>MSG:{SYSUSER}:Here available {len(lobby_users)} users, currently playing {len(play_users)}"
+    msg = f":>>MSG:{SYSUSER}:Here available {len(lobby_users) - 1} users, currently playing {len(play_users)}"
     send(client, msg)
 
 
@@ -309,7 +312,7 @@ def deleteRoom(room: Room):
         msg2 = msg + f":{client_sockets[player].client.username}"
         send(player, msg2)
     
-    logging.warning(f"[*] Destroying room {room.name}")
+    logging.info(f"[R {room.name}]: Destroying room")
     rooms.pop(room.name)
 
 
@@ -325,10 +328,10 @@ def startRoom(room: Room):
     session = Session()
     session.name = room.name
     sessions.append(session)
-    logging.warning(f"[*] Starting session {session.name}")
+    logging.info(f"[S {session.name}] Starting for {room.joined} players")
     session.host_uuid = str(uuid.uuid4())
     hostMessage = f":>>HOST:{session.host_uuid}:{room.joined - 1}" #one client will be connected locally
-    logging.debug(f"    host: {session.host_uuid} connections {room.joined - 1}")
+    logging.debug(f"---- host: {session.host_uuid} connections {room.joined - 1}")
     #host message must be before start message
     send(room.host, hostMessage)
 
@@ -342,7 +345,7 @@ def startRoom(room: Room):
         client_sockets.pop(player)
 
     #this room shall not exist anymore
-    logging.info(f"[*] Destroying room {room.name}")
+    logging.info(f"[R {room.name}] Exit room as session {session.name} was started")
     rooms.pop(room.name)
 
 
@@ -353,16 +356,17 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
 
     #check for game mode connection
     msg = str(arr)
+    exchangeMessageFlag = False #flag to identify if message exchange was started
     if msg.find("Aiya!") != -1:
         sender.client = ClientPipe()
-        logging.debug("    vcmi recognized")
+        logging.info("[!] VCMI recognized")
 
     if sender.isPipe():
         if sender.client.auth: #if already playing - sending raw bytes as is
             sender.client.prevmessages.append(arr)
         else:
             sender.client.prevmessages.append(struct.pack('<I', len(arr)) + arr) #pack message
-            logging.debug("    packing message")
+            logging.debug("---- packing message")
             #search fo application type in the message
             match = re.search(r"\((\w+)\)", msg)
             _appType = ''
@@ -372,13 +376,12 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             
             #extract uuid from message
             _uuid = arr.decode()
-            logging.debug(f"    decoding {_uuid}")
+            logging.debug(f"---- decoding {_uuid}")
             if not _uuid == '' and not sender.client.apptype == '':
                 #search for uuid
                 for session in sessions:
                     #verify uuid of connected application
                     if _uuid.find(session.host_uuid) != -1 and sender.client.apptype == "server":
-                        logging.info(f"    apptype {sender.client.apptype} uuid {_uuid}")
                         session.addConnection(cs, True)
                         sender.client.session = session
                         sender.client.auth = True
@@ -386,13 +389,13 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
                         # this is workaround to send only one remaining byte
                         # WARNING: reversed byte order is not supported
                         sender.client.prevmessages.append(cs.recv(1))
-                        logging.info(f"    binding server connection to session {session.name}")
+                        exchangeMessageFlag = True
+                        logging.info(f"[S {session.name}]: Bindind {sender.client.apptype} {_uuid}")
                         break
 
                     if sender.client.apptype == "client":
                         for p in session.clients_uuid:
                             if _uuid.find(p) != -1:
-                                logging.info(f"    apptype {sender.client.apptype} uuid {_uuid}")
                                 #client connection
                                 session.addConnection(cs, False)
                                 sender.client.session = session
@@ -401,17 +404,27 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
                                 # this is workaround to send only one remaining byte
                                 # WARNING: reversed byte order is not supported
                                 sender.client.prevmessages.append(cs.recv(1))
-                                logging.info(f"    binding client connection to session {session.name}")
+                                exchangeMessageFlag = True
+                                logging.info(f"[S {session.name}] Binding {sender.client.apptype} {_uuid}")
                                 break
 
     #game mode
     if sender.isPipe() and sender.client.auth and sender.client.session.validPipe(cs):
         #send messages from queue
         opposite = sender.client.session.getPipe(cs)
+        if opposite not in client_sockets:
+            logging.critical(f"[S {sender.client.session.name}] Opposite socket is not connected")
+            return
+
+        if exchangeMessageFlag:
+            logging.info(f"[S {sender.client.session.name}] Message exchange {sender.address} - {client_sockets[opposite].address}")
+
+        #receiving messages from opposite client
         for x in client_sockets[opposite].client.prevmessages:
             cs.sendall(x)
         client_sockets[opposite].client.prevmessages.clear()
 
+        #sending our messages to opposite client
         for x in sender.client.prevmessages:
             opposite.sendall(x)
 
@@ -420,7 +433,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
 
     #we are in pipe mode but game still not started - waiting other clients to connect
     if sender.isPipe():
-        logging.debug(f"  waiting other clients")
+        logging.debug(f"---- waiting other clients")
         return
     
     #intialize lobby mode
@@ -465,7 +478,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
     #greetings to the server
     if tag == "GREETINGS":
         if sender.client.auth:
-            logging.error(f"[!] Greetings from authorized user {sender.client.username} {sender.address}")
+            logging.error(f"[*] Greetings from authorized user {sender.client.username} {sender.address}")
             send(cs, ":>>ERROR:User already authorized")
             return
 
@@ -525,6 +538,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         sender.client.joined = True
         sender.client.ready = False
         sender.client.room = rooms[tag_value]
+        logging.info(f"[R {tag_value}]: room created")
 
     #set password for the session
     if tag == "PSWD" and sender.client.auth and sender.client.joined and sender.client.room.host == cs:
@@ -580,6 +594,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         if not sender.client.room.protected or sender.client.room.password == tag_value:
             sender.client.room.join(cs)
             message = f":>>JOIN:{sender.client.room.name}:{sender.client.username}"
+            logging.info(f"[R {sender.client.room.name}] {sender.client.username} joined")
             broadcast(sender.client.room.players, message)
             updateStatus(sender.client.room)
             updateRooms()
@@ -600,6 +615,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             broadcast(sender.client.room.players, message)
             sender.client.room.leave(cs)
             sender.client.joined = False
+            logging.info(f"[R {sender.client.room.name}] {sender.client.username} left")
             updateStatus(sender.client.room)
         updateRooms() 
 
@@ -640,7 +656,7 @@ def listen_for_client(cs):
 while True:
     # we keep listening for new connections all the time
     client_socket, client_address = s.accept()
-    logging.warning(f"[+] {client_address} connected.")
+    logging.info(f"[+] {client_address} connected.")
     # add the new connected client to connected sockets
     client_sockets[client_socket] = Sender()
     client_sockets[client_socket].address = client_address
