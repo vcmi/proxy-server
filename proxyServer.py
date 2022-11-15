@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.1"
+PROXYSERVER_VERSION = "0.2"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 1
@@ -13,6 +13,9 @@ PROTOCOL_VERSION_MAX = 1
 # server's IP address
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5002 # port we want to use
+
+MAX_CONNECTIONS = 50
+SYSUSER = "System" #username from whom system messages will be sent
 
 #logging
 logHandlerHighlevel = logging.FileHandler('proxyServer.log')
@@ -107,9 +110,11 @@ class Session:
             if isServer and not gc.serverInit:
                 gc.server = conn
                 gc.serverInit = True
+                return
             if not isServer and not gc.clientInit:
                 gc.client = conn
                 gc.clientInit = True
+                return
             
         #no existing connection - create the new one
         gc = GameConnection()
@@ -211,7 +216,7 @@ s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 # bind the socket to the address we specified
 s.bind((SERVER_HOST, SERVER_PORT))
 # listen for upcoming connections
-s.listen(10)
+s.listen(MAX_CONNECTIONS)
 logging.critical(f"[*] Listening as {SERVER_HOST}:{SERVER_PORT}")
 
 # active rooms
@@ -223,14 +228,16 @@ sessions = []
 # initialize list/set of all connected client's sockets
 client_sockets = {}
 
-
+#correctly process disconnection and close socket
 def handleDisconnection(client: socket):
     logging.warning(f"[!] Disconnecting client {client}")
     
     if not client in client_sockets:
+        logging.error("    Disconnection for removed socket")
         return
 
     sender = client_sockets[client]
+    #cleanup room
     if sender.isLobby() and sender.client.joined:
         if not sender.client.room.started:
             if sender.client.room.host == client:
@@ -244,6 +251,7 @@ def handleDisconnection(client: socket):
             updateStatus(sender.client.room)
             updateRooms()
 
+    #cleanup session
     if sender.isPipe() and sender.client.auth:
         if sender.client.session in sessions:
             sender.client.session.removeConnection(client)
@@ -255,10 +263,11 @@ def handleDisconnection(client: socket):
     client_sockets.pop(client)
 
 
+#sending message for lobby players
 def send(client: socket, message: str):
     if client in client_sockets.keys():
         sender = client_sockets[client]
-        client.send(message.encode(errors='replace'))
+        client.send(message.encode(encoding=sender.client.encoding, errors='replace'))
 
 
 def broadcast(clients: list, message: str):
@@ -276,6 +285,13 @@ def sendRooms(client: socket):
             counter += 1
     msg = f":>>SESSIONS:{counter}{msg2}"
 
+    send(client, msg)
+
+
+def sendCommonInfo(client: socket):
+    lobby_users = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and client_sockets[i].client.auth]
+    play_users = [i for i in client_sockets.keys() if client_sockets[i].isPipe()]
+    msg = f":>>MSG:{SYSUSER}:Here available {len(lobby_users)} users, currently playing {len(play_users)}"
     send(client, msg)
 
 
@@ -455,6 +471,10 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             send(cs, f":>>ERROR:Too short username {tag_value}")
             return
 
+        if tag_value == SYSUSER:
+            send(cs, f":>>ERROR:Invalid username")
+            return
+
         for user in client_sockets.values():
             if user.isLobby() and user.client.username == tag_value:
                 send(cs, f":>>ERROR:Can't connect with the name {tag_value}. This login is already occpupied")
@@ -462,8 +482,14 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         
         logging.info(f"[*] {sender.address} autorized as {tag_value}")
         sender.client.username = tag_value
+        #sending info that someone here before authorizing - to not send it to itself
+        targetClients = [i for i in client_sockets.keys() if not client_sockets[i].client.joined]
+        message = f":>>MSG:{SYSUSER}:{sender.client.username} is here"
+        broadcast(targetClients, message)
+        #authorizing user
         sender.client.auth = True
         sendRooms(cs)
+        sendCommonInfo(cs)
 
     #VCMI version received
     if tag == "VER" and sender.client.auth:
