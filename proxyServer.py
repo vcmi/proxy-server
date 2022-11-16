@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.2.1"
+PROXYSERVER_VERSION = "0.2.2"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 1
@@ -448,7 +448,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         # first byte is protocol version
         sender.client.protocolVersion = arr[0]
         if arr[0] < PROTOCOL_VERSION_MIN or arr[0] > PROTOCOL_VERSION_MAX:
-            logging.critical(f"[!] Error: client has incompatbile protocol version {arr[0]}")
+            logging.critical(f"[!] Error: client {sender.address} has incompatbile protocol version {arr[0]}")
             send(cs, ":>>ERROR:Cannot connect to remote server due to protocol incompatibility")
             return
 
@@ -457,6 +457,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             sender.client.encoding = "utf8"
         else:
             if len(arr) < arr[1] + 2:
+                logging.critical(f"[!] Client {sender.address} message is incorrect: {arr}")
                 send(cs, ":>>ERROR:Protocol error")
                 return
             # read encoding string
@@ -478,20 +479,23 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
     #greetings to the server
     if tag == "GREETINGS":
         if sender.client.auth:
-            logging.error(f"[*] Greetings from authorized user {sender.client.username} {sender.address}")
+            logging.critical(f"[*] Greetings from authorized user {sender.client.username} {sender.address}")
             send(cs, ":>>ERROR:User already authorized")
             return
 
         if len(tag_value) < 3:
+            logging.warning(f"[!] Incorrect username from {sender.address}: {tag_value}")
             send(cs, f":>>ERROR:Too short username {tag_value}")
             return
 
         if tag_value == SYSUSER:
+            logging.warning(f"[!] Incorrect username from {sender.address}: {tag_value}")
             send(cs, f":>>ERROR:Invalid username")
             return
 
         for user in client_sockets.values():
             if user.isLobby() and user.client.username == tag_value:
+                logging.warning(f"[!] Client username already exist {sender.address}: {tag_value}")
                 send(cs, f":>>ERROR:Can't connect with the name {tag_value}. This login is already occpupied")
                 return
         
@@ -598,6 +602,11 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             broadcast(sender.client.room.players, message)
             updateStatus(sender.client.room)
             updateRooms()
+            #verify version and send warning
+            host_sender = client_sockets[sender.client.room.host]
+            if sender.client.vcmiversion != host_sender.client.vcmiversion:
+                message = f":>>MSG:{SYSUSER}:Your VCMI version {sender.client.vcmiversion} differs from host version {host_sender.client.vcmiversion}, which may cause problems"
+                send(cs, message)
 
         else:
             sender.client.joined = False
