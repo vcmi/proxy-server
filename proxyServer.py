@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.2.2"
+PROXYSERVER_VERSION = "0.3.0"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 2
