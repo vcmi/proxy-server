@@ -8,7 +8,7 @@ from threading import Thread
 PROXYSERVER_VERSION = "0.2.2"
 
 PROTOCOL_VERSION_MIN = 1
-PROTOCOL_VERSION_MAX = 1
+PROTOCOL_VERSION_MAX = 2
 
 # server's IP address
 SERVER_HOST = "0.0.0.0"
@@ -16,6 +16,16 @@ SERVER_PORT = 5002 # port we want to use
 
 MAX_CONNECTIONS = 50
 SYSUSER = "System" #username from whom system messages will be sent
+
+STATS = {
+    "uniques" : set(), #address
+    "users" : set(), #usernames
+    "logins" : 0, #sockets
+    "clients" : 0, #vcmi clients
+    "rooms" : 0, #created rooms
+    "sessions" : 0, #started sessions
+    "connections" : 0 #successful connections
+}
 
 #logging
 logHandlerHighlevel = logging.FileHandler('proxyServer.log')
@@ -66,13 +76,15 @@ class Room:
     name: str # name of session
     host: socket # player socket who created the room
     players = [] # list of sockets of players, joined to the session
+    mods = {} # modname - version pairs of enabled by host mods
     started = False
 
     def __init__(self, host: socket, name: str) -> None:
         self.name = name
         self.host = host
         self.players = [host]
-        self.joined += 1
+        self.joined = 1
+        self.mods = {}
 
     def isJoined(self, player: socket) -> bool:
         return player in self.players
@@ -88,6 +100,12 @@ class Room:
 
         self.players.remove(player)
         self.joined -= 1
+
+    def modsString(self) -> str:
+        result = f"{len(self.mods)}"
+        for m in self.mods.keys():
+            result += f":{m}:{self.mods[m]}"
+        return result
 
 
 class Session:
@@ -360,6 +378,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
     if msg.find("Aiya!") != -1:
         sender.client = ClientPipe()
         logging.info("[!] VCMI recognized")
+        STATS["clients"] += 1
 
     if sender.isPipe():
         if sender.client.auth: #if already playing - sending raw bytes as is
@@ -418,6 +437,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
 
         if exchangeMessageFlag:
             logging.info(f"[S {sender.client.session.name}] Message exchange {sender.address} - {client_sockets[opposite].address}")
+            STATS["connections"] += 1
 
         #receiving messages from opposite client
         for x in client_sockets[opposite].client.prevmessages:
@@ -500,6 +520,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
                 return
         
         logging.info(f"[*] {sender.address} autorized as {tag_value}")
+        STATS["users"].add(tag_value)
         sender.client.username = tag_value
         #sending info that someone here before authorizing - to not send it to itself
         targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and not client_sockets[i].client.joined]
@@ -543,6 +564,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         sender.client.ready = False
         sender.client.room = rooms[tag_value]
         logging.info(f"[R {tag_value}]: room created")
+        STATS["rooms"] += 1
 
     #set password for the session
     if tag == "PSWD" and sender.client.auth and sender.client.joined and sender.client.room.host == cs:
@@ -614,6 +636,20 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             send(cs, message)
             return
 
+    #[PROTOCOL 2] receive list of mods
+    if tag == "MODS" and sender.client.auth and sender.client.joined:
+        mods = tag_value.split(";") #list of modname&modverion
+        
+        if sender.client.room.host == cs:
+            #set mods
+            for m in mods:
+                mp = m.partition("&")
+                sender.client.room.mods[mp[0]] = mp[2]
+        
+        #send mods
+        message = f":>>MODS:{sender.client.room.modsString()}"
+        send(cs, message)
+
     #leaving session
     if tag == "LEAVE" and sender.client.auth and sender.client.joined and sender.client.room.name == tag_value:
         if sender.client.room.host == cs:
@@ -632,6 +668,18 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         if sender.client.room.joined > 0 and sender.client.room.host == cs:
             startRoom(sender.client.room)
             updateRooms()
+            STATS["sessions"] += 1
+
+    #manual system command
+    if tag == "ROOT" and sender.client.auth:
+        logging.warning(f"[!] ROOT from {sender.address} {sender.client.username}: {tag_value}")
+        if tag_value in STATS.keys():
+            message = f":>>ERROR:Uknown command"
+            if isinstance(STATS[tag_value], set):
+                message = f":>>MSG:{SYSUSER}:{len(STATS[tag_value])}"
+            else:
+                message = f":>>MSG:{SYSUSER}:{STATS[tag_value]}"
+            send(cs, message)
 
     dispatch(cs, sender, (_nextTag[1] + _nextTag[2]).encode())
 
@@ -666,6 +714,8 @@ while True:
     # we keep listening for new connections all the time
     client_socket, client_address = s.accept()
     logging.info(f"[+] {client_address} connected.")
+    STATS["uniques"].add(client_address[0])
+    STATS["logins"] += 1
     # add the new connected client to connected sockets
     client_sockets[client_socket] = Sender()
     client_sockets[client_socket].address = client_address
