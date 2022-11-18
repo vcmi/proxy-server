@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.3.0"
+PROXYSERVER_VERSION = "0.3.1"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 2
@@ -236,6 +236,7 @@ s.bind((SERVER_HOST, SERVER_PORT))
 # listen for upcoming connections
 s.listen(MAX_CONNECTIONS)
 logging.info("=============================================")
+logging.info(f"[!] ProxyServer version {PROXYSERVER_VERSION}")
 logging.info(f"[!] Listening as {SERVER_HOST}:{SERVER_PORT}")
 
 # active rooms
@@ -371,6 +372,9 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
     
     if arr == None or len(arr) == 0:
         return
+
+    if (sender.isPipe() or sender.isLobby() and not sender.client.auth) or (not sender.isPipe() and not sender.isLobby()):
+        logging.debug(f"---- {sender.address} is sending {arr}")
 
     #check for game mode connection
     msg = str(arr)
