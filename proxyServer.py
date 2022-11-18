@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.3.1"
+PROXYSERVER_VERSION = "0.3.2"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 2
@@ -276,6 +276,14 @@ def handleDisconnection(client: socket):
     if sender.isPipe() and sender.client.auth:
         if sender.client.session in sessions:
             logging.info(f"[S {sender.client.session.name}]: Remove {sender.client.apptype}")
+            #break opposite connection
+            if sender.client.session.validPipe(client):
+                opposite = sender.client.session.getPipe(client)
+                logging.info(f"[S {sender.client.session.name}]: Disconnecting pipe socket for {client_sockets[opposite].client.apptype} at {client_sockets[opposite].address}")
+                sender.client.session.removeConnection(opposite)
+                opposite.close()
+                client_sockets.pop(opposite)
+
             sender.client.session.removeConnection(client)
             if not len(sender.client.session.connections):
                 logging.info(f"[S {sender.client.session.name}] Destroying session")
