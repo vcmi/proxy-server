@@ -5,10 +5,10 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.3.2"
+PROXYSERVER_VERSION = "0.3.3"
 
 PROTOCOL_VERSION_MIN = 1
-PROTOCOL_VERSION_MAX = 2
+PROTOCOL_VERSION_MAX = 3
 
 # server's IP address
 SERVER_HOST = "0.0.0.0"
@@ -106,6 +106,17 @@ class Room:
         for m in self.mods.keys():
             result += f":{m}:{self.mods[m]}"
         return result
+    
+    def verifyForStart(self) -> bool:
+        for pl in self.players:
+            if not client_sockets[pl].client.ready:
+                return False
+        
+        return True
+    
+    def resetPlayersReady(self):
+        for pl in self.players:
+            client_sockets[pl].client.ready = False
 
 
 class Session:
@@ -114,12 +125,14 @@ class Session:
     clients_uuid: list # list od vcmiclients uuid
     players: list # list of sockets of players, joined to the session
     connections: list # list of GameConnections for vcmiclient/vcmiserver (game mode)
+    pipes: dict #dictionary of pipes for speed up
 
     def __init__(self) -> None:
         self.name = ""
         self.host_uuid = ""
         self.clients_uuid = []
         self.connections = []
+        self.pipes = {}
         pass
 
     def addConnection(self, conn: socket, isServer: bool):
@@ -128,10 +141,14 @@ class Session:
             if isServer and not gc.serverInit:
                 gc.server = conn
                 gc.serverInit = True
+                self.pipes[conn] = gc.client
+                self.pipes[gc.client] = conn
                 return
             if not isServer and not gc.clientInit:
                 gc.client = conn
                 gc.clientInit = True
+                self.pipes[conn] = gc.server
+                self.pipes[gc.server] = conn
                 return
             
         #no existing connection - create the new one
@@ -145,6 +162,10 @@ class Session:
         self.connections.append(gc)
 
     def removeConnection(self, conn: socket):
+        if self.validPipe(conn):
+            self.pipes.pop(self.getPipe(conn))
+            self.pipes.pop(conn)
+
         newConnections = []
         for c in self.connections:
             if c.server == conn:
@@ -158,17 +179,10 @@ class Session:
         self.connections = newConnections
 
     def validPipe(self, conn) -> bool:
-        for gc in self.connections:
-            if gc.server == conn or gc.client == conn:
-                return gc.serverInit and gc.clientInit
-        return False
+        return conn in self.pipes.keys()
 
     def getPipe(self, conn) -> socket:
-        for gc in self.connections:
-            if gc.server == conn:
-                return gc.client
-            if gc.client == conn:
-                return gc.server
+        return self.pipes[conn]
 
 
 class Client:
@@ -351,6 +365,7 @@ def updateStatus(room: Room):
 
 
 def startRoom(room: Room):
+    STATS["sessions"] += 1
     room.started = True
     session = Session()
     session.name = room.name
@@ -374,6 +389,14 @@ def startRoom(room: Room):
     #this room shall not exist anymore
     logging.info(f"[R {room.name}] Exit room as session {session.name} was started")
     rooms.pop(room.name)
+
+    
+def startRoomIfReady(room: Room) -> bool:
+    if room.joined > 1 and room.verifyForStart():
+        startRoom(room)
+        return True
+    
+    return False
 
 
 def dispatch(cs: socket, sender: Sender, arr: bytes):
@@ -451,15 +474,15 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             logging.info(f"[S {sender.client.session.name}] Message exchange {sender.address} - {client_sockets[opposite].address}")
             STATS["connections"] += 1
 
-        #receiving messages from opposite client
-        for x in client_sockets[opposite].client.prevmessages:
-            cs.sendall(x)
-        client_sockets[opposite].client.prevmessages.clear()
-
         #sending our messages to opposite client
         for x in sender.client.prevmessages:
             opposite.sendall(x)
 
+        #receiving messages from opposite client
+        for x in client_sockets[opposite].client.prevmessages:
+            cs.sendall(x)
+
+        client_sockets[opposite].client.prevmessages.clear()
         sender.client.prevmessages.clear()
         return
 
@@ -662,6 +685,12 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         message = f":>>MODS:{sender.client.room.modsString()}"
         send(cs, message)
 
+        #[PROTOCOL 3] send mods to the server
+        mods_string = ':'.join(mods).replace("&", ":")
+        message = f":>>MODSOTHER:{sender.client.username}:{len(mods)}:{mods_string}"
+        if len(mods) > 0 and client_sockets[sender.client.room.host].client.protocolVersion >= 3:
+            send(sender.client.room.host, message)
+
     #leaving session
     if tag == "LEAVE" and sender.client.auth and sender.client.joined and sender.client.room.name == tag_value:
         if sender.client.room.host == cs:
@@ -671,16 +700,46 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             message = f":>>KICK:{sender.client.room.name}:{sender.client.username}"
             broadcast(sender.client.room.players, message)
             sender.client.room.leave(cs)
+            sender.client.room.resetPlayersReady()
             sender.client.joined = False
             logging.info(f"[R {sender.client.room.name}] {sender.client.username} left")
             updateStatus(sender.client.room)
-        updateRooms() 
+        updateRooms()
+
+    #[PROTOCOL 3]
+    if tag == "KICK" and sender.client.auth and sender.client.joined and sender.client.room.host == cs:
+        for pl in sender.client.room.players:
+            if pl == sender.client.room.host:
+                continue
+
+            if client_sockets[pl].client.username == tag_value:
+                message = f":>>KICK:{sender.client.room.name}:{client_sockets[pl].client.username}"
+                broadcast(sender.client.room.players, message)
+                sender.client.room.leave(pl)
+                client_sockets[pl].client.joined = False
+                logging.info(f"[R {sender.client.room.name}] {client_sockets[pl].client.username} was kicked")
+                updateStatus(sender.client.room)
+                startRoomIfReady(sender.client.room)
+                updateRooms() 
+                break
 
     if tag == "READY" and sender.client.auth and sender.client.joined and sender.client.room.name == tag_value:
-        if sender.client.room.joined > 0 and sender.client.room.host == cs:
+        sender.client.ready = not sender.client.ready
+        updateStatus(sender.client.room)
+
+        #for old versions of protocol we can start game by host ready
+        if sender.client.protocolVersion < 3 and sender.client.room.host == cs:
             startRoom(sender.client.room)
             updateRooms()
-            STATS["sessions"] += 1
+        else:
+            if startRoomIfReady(sender.client.room):
+                updateRooms()
+
+    #[PROTOCOL 3]
+    if tag == "FORCESTART" and sender.client.auth and sender.client.joined and sender.client.room.name == tag_value and sender.client.room.host == cs:
+        startRoom(sender.client.room)
+        updateRooms()
+        STATS["sessions"] += 1
 
     #manual system command
     if tag == "ROOT" and sender.client.auth:
