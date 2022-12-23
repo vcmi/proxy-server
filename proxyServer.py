@@ -5,7 +5,7 @@ import struct
 import logging
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.3.3"
+PROXYSERVER_VERSION = "0.3.4"
 
 PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 3
@@ -337,6 +337,8 @@ def sendCommonInfo(client: socket):
     lobby_users = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and client_sockets[i].client.auth]
     play_users = [i for i in client_sockets.keys() if client_sockets[i].isPipe()]
     msg = f":>>MSG:{SYSUSER}:Here available {len(lobby_users) - 1} users, currently playing {len(play_users)}"
+    msg += "\n Send <HERE> to see people names in the chat"
+    msg += "\n Send direct message by typing @username"
     send(client, msg)
 
 
@@ -397,6 +399,18 @@ def startRoomIfReady(room: Room) -> bool:
         return True
     
     return False
+
+
+def messageTarget(s: str):
+    ttuple = s.partition("@")
+    if ttuple[0] != "" or ttuple[1] != "@":
+        return ("", s)
+
+    ttuple = ttuple[2].partition(" ")
+    if ttuple[0] == "":
+        return ("", s)
+
+    return (ttuple[0], ttuple[2])    
 
 
 def dispatch(cs: socket, sender: Sender, arr: bytes):
@@ -543,7 +557,7 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             send(cs, f":>>ERROR:Too short username {tag_value}")
             return
 
-        if tag_value == SYSUSER:
+        if tag_value == SYSUSER or tag_value == "all" or len(tag_value.split(" ")) > 1:
             logging.warning(f"[!] Incorrect username from {sender.address}: {tag_value}")
             send(cs, f":>>ERROR:Invalid username")
             return
@@ -573,12 +587,18 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
 
     #message received
     if tag == "MSG" and sender.client.auth:
-        message = f":>>MSG:{sender.client.username}:{tag_value}"
-        if sender.client.joined:
-            broadcast(sender.client.room.players, message) #send message only to players in the room
-        else:
-            targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and not client_sockets[i].client.joined]
-            broadcast(targetClients, message)
+        target = messageTarget(tag_value)
+        targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby()]
+        if sender.client.joined and target[0] != "all":
+            targetClients = sender.client.room.players #send message only to players in the room
+        
+        if target[0] != "" and target[0] != "all":
+            for cl in targetClients:
+                if client_sockets[cl].client.username == target[0]:
+                    targetClients = [cl, cs]
+
+        message = f":>>MSG:{sender.client.username}:{target[1]}"
+        broadcast(targetClients, message)
 
     #new room
     if tag == "NEW" and sender.client.auth and not sender.client.joined:
@@ -629,6 +649,9 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         send(cs, message)
         updateStatus(sender.client.room)
         updateRooms()
+        #send instructions to player
+        message = f":>>MSG:{SYSUSER}:You are in the room chat. To send message to global chat, type @all"
+        send(cs, message)
 
     #join session
     if tag == "JOIN" and sender.client.auth and not sender.client.joined:
@@ -659,6 +682,9 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             broadcast(sender.client.room.players, message)
             updateStatus(sender.client.room)
             updateRooms()
+            #send instructions to player
+            message = f":>>MSG:{SYSUSER}:You are in the room chat. To send message to global chat, type @all"
+            send(cs, message)
             #verify version and send warning
             host_sender = client_sockets[sender.client.room.host]
             if sender.client.vcmiversion != host_sender.client.vcmiversion:
@@ -751,6 +777,17 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             else:
                 message = f":>>MSG:{SYSUSER}:{STATS[tag_value]}"
             send(cs, message)
+
+    #manual user command
+    if tag == "HERE" and sender.client.auth:
+        logging.info(f"[*] HERE from {sender.address} {sender.client.username}: {tag_value}")
+        message = f":>>MSG:{SYSUSER}:People in lobby"
+        targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby()]
+        for cl in targetClients:
+            message += f"\n{client_sockets[cl].client.username}"
+            if client_sockets[cl].client.joined:
+                message += f"[room {client_sockets[cl].client.room.name}]"
+        send(cs, message)
 
     dispatch(cs, sender, (_nextTag[1] + _nextTag[2]).encode())
 
