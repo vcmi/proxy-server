@@ -1,14 +1,27 @@
+import sys
 import socket
 import re
 import uuid
 import struct
 import logging
+import time
 from threading import Thread
 
-PROXYSERVER_VERSION = "0.3.4"
+PROXYSERVER_VERSION = "0.4.0"
+
+LOG_LEVEL = logging.INFO
+LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL
+}
 
 PROTOCOL_VERSION_MIN = 1
-PROTOCOL_VERSION_MAX = 3
+PROTOCOL_VERSION_MAX = 4
+
+HEALTHCHECK_TIMER = 30
 
 # server's IP address
 SERVER_HOST = "0.0.0.0"
@@ -16,6 +29,36 @@ SERVER_PORT = 5002 # port we want to use
 
 MAX_CONNECTIONS = 50
 SYSUSER = "System" #username from whom system messages will be sent
+
+for arg in sys.argv[1:]:
+    element = arg.partition("=")
+    if element[1] != "=":
+        print(f"Unknown argument: {arg}")
+        continue
+
+    if element[0] == "logging":
+        LOG_LEVEL = LOG_LEVELS[element[2]]
+
+    if element[0] == "port":
+        num = int(element[2])
+        if num == 0:
+            print(f"Cannot listn port 0, continue with default {SERVER_PORT}")
+            continue
+        SERVER_PORT = num
+
+    if element[0] == "capacity":
+        num = int(element[2])
+        if num == 0:
+            print(f"Cannot limit connections capacity with 0, continue with default {MAX_CONNECTIONS}")
+            continue
+        MAX_CONNECTIONS = num
+
+    if element[0] == "healthcheck":
+        num = int(element[2])
+        if num < 10:
+            print(f"Too frequent timer for healthcheck, continue with default {HEALTHCHECK_TIMER}")
+            continue
+        HEALTHCHECK_TIMER = num
 
 STATS = {
     "uniques" : set(), #address
@@ -27,6 +70,10 @@ STATS = {
     "connections" : 0 #successful connections
 }
 
+#game modes
+NEW_GAME = 0
+LOAD_GAME = 1
+
 #logging
 logHandlerHighlevel = logging.FileHandler('proxyServer.log')
 logHandlerHighlevel.setLevel(logging.INFO)
@@ -34,7 +81,11 @@ logHandlerHighlevel.setLevel(logging.INFO)
 logHandlerLowlevel = logging.FileHandler('proxyServer_debug.log')
 logHandlerLowlevel.setLevel(logging.DEBUG)
 
-logging.basicConfig(handlers=[logHandlerHighlevel, logHandlerLowlevel], level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S')
+handlers = [logHandlerHighlevel]
+if LOG_LEVEL == logging.DEBUG:
+    handlers.append(logHandlerLowlevel)
+
+logging.basicConfig(handlers=handlers, level=LOG_LEVEL, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S')
 
 def receive_packed(sock):
     # Read message length and unpack it into an integer
@@ -77,6 +128,7 @@ class Room:
     host: socket # player socket who created the room
     players = [] # list of sockets of players, joined to the session
     mods = {} # modname - version pairs of enabled by host mods
+    gamemode = NEW_GAME # game
     started = False
 
     def __init__(self, host: socket, name: str) -> None:
@@ -84,6 +136,7 @@ class Room:
         self.host = host
         self.players = [host]
         self.joined = 1
+        self.gamemode = NEW_GAME
         self.mods = {}
 
     def isJoined(self, player: socket) -> bool:
@@ -200,6 +253,7 @@ class ClientLobby(Client):
     encoding: str
     ready: bool
     vcmiversion: str #TODO: check version compatibility
+    timer: int
 
     def __init__(self) -> None:
         super().__init__()
@@ -210,6 +264,7 @@ class ClientLobby(Client):
         self.encoding = 'utf8'
         self.ready = False
         self.vcmiversion = ""
+        self.timer = HEALTHCHECK_TIMER
 
 
 class ClientPipe(Client):
@@ -307,6 +362,11 @@ def handleDisconnection(client: socket):
     client_sockets.pop(client)
     logging.debug(f"---- disconnected")
 
+    #updating list of users
+    for cl in client_sockets.keys():
+        if client_sockets[cl].isLobby() and client_sockets[cl].client.auth and client_sockets[cl].client.protocolVersion >= 4:
+            sendUsers(cl)
+
 
 #sending message for lobby players
 def send(client: socket, message: str):
@@ -332,12 +392,25 @@ def sendRooms(client: socket):
 
     send(client, msg)
 
+def sendUsers(client: socket):
+    targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby()]
+    msg = f":>>USERS:{len(targetClients)}"
+        
+    for cl in targetClients:
+        msg += f":{client_sockets[cl].client.username}"
+    
+    send(client, msg)
+
 
 def sendCommonInfo(client: socket):
+    if client_sockets[client].client.protocolVersion >= 4:
+        sendUsers(client)
+
     lobby_users = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and client_sockets[i].client.auth]
     play_users = [i for i in client_sockets.keys() if client_sockets[i].isPipe()]
     msg = f":>>MSG:{SYSUSER}:Here available {len(lobby_users) - 1} users, currently playing {len(play_users)}"
-    msg += "\n Send <HERE> to see people names in the chat"
+    if client_sockets[client].client.protocolVersion < 4:
+        msg += "\n Send <HERE> to see people names in the chat"
     msg += "\n Send direct message by typing @username"
     send(client, msg)
 
@@ -408,9 +481,29 @@ def messageTarget(s: str):
 
     ttuple = ttuple[2].partition(" ")
     if ttuple[0] == "":
+
         return ("", s)
 
     return (ttuple[0], ttuple[2])    
+
+
+def timer_for_clients():
+    start = time.time()
+    while True:
+        end = time.time()
+        if end - start >= HEALTHCHECK_TIMER:
+            start = end
+            clientsForRemove = []
+            for cs in client_sockets.keys():
+                if client_sockets[cs].isLobby() and client_sockets[cs].client.auth and client_sockets[cs].client.protocolVersion >= 4:
+                    client_sockets[cs].client.timer -= HEALTHCHECK_TIMER
+                    if client_sockets[cs].client.timer <= 0:
+                        send(cs, ":>>HEALTH:")
+                    if client_sockets[cs].client.timer <= -HEALTHCHECK_TIMER:
+                        clientsForRemove.append(cs)
+            
+            for cs in clientsForRemove:
+                handleDisconnection(cs)
 
 
 def dispatch(cs: socket, sender: Sender, arr: bytes):
@@ -572,9 +665,13 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
         STATS["users"].add(tag_value)
         sender.client.username = tag_value
         #sending info that someone here before authorizing - to not send it to itself
-        targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and not client_sockets[i].client.joined]
+        targetClientsOld = [i for i in client_sockets.keys() if client_sockets[i].isLobby() and client_sockets[i].client.protocolVersion < 4]
         message = f":>>MSG:{SYSUSER}:{sender.client.username} is here"
-        broadcast(targetClients, message)
+        broadcast(targetClientsOld, message)
+        #updating list of users
+        for cl in client_sockets.keys():
+            if client_sockets[cl].isLobby() and client_sockets[cl].client.protocolVersion >= 4:
+                sendUsers(cl)
         #authorizing user
         sender.client.auth = True
         sendRooms(cs)
@@ -697,6 +794,20 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
             send(cs, message)
             return
 
+    #[PROTOCOL 4] set game mode
+    if tag == "HOSTMODE" and sender.client.auth and sender.client.joined:
+        #checks for permissions
+        if sender.client.room.host != cs:
+            message = ":>>ERROR:Insuficcient permissions"
+            send(cs, message)
+            return
+
+        #update game mode for everybody
+        sender.client.room.gamemode = int(tag_value)
+        message = f":>>GAMEMODE:{sender.client.room.gamemode}"
+        broadcast(sender.client.room.players, message)
+
+
     #[PROTOCOL 2] receive list of mods
     if tag == "MODS" and sender.client.auth and sender.client.joined:
         mods = tag_value.split(";") #list of modname&modverion
@@ -781,13 +892,21 @@ def dispatch(cs: socket, sender: Sender, arr: bytes):
     #manual user command
     if tag == "HERE" and sender.client.auth:
         logging.info(f"[*] HERE from {sender.address} {sender.client.username}: {tag_value}")
-        message = f":>>MSG:{SYSUSER}:People in lobby"
-        targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby()]
-        for cl in targetClients:
-            message += f"\n{client_sockets[cl].client.username}"
-            if client_sockets[cl].client.joined:
-                message += f"[room {client_sockets[cl].client.room.name}]"
-        send(cs, message)
+        if sender.client.protocolVersion >= 4:
+            sendUsers(cs)
+        else:
+            targetClients = [i for i in client_sockets.keys() if client_sockets[i].isLobby()]
+            message = f":>>MSG:{SYSUSER}:People in lobby"
+        
+            for cl in targetClients:
+                message += f"\n{client_sockets[cl].client.username}"
+                if client_sockets[cl].client.joined:
+                    message += f"[room {client_sockets[cl].client.room.name}]"
+            send(cs, message)
+
+    #[PROTOCOL 4] healthcheck
+    if tag == "ALIVE" and sender.client.auth:
+        sender.client.timer = HEALTHCHECK_TIMER
 
     dispatch(cs, sender, (_nextTag[1] + _nextTag[2]).encode())
 
@@ -817,6 +936,10 @@ def listen_for_client(cs):
             handleDisconnection(cs)
             return
 
+
+timer = Thread(target=timer_for_clients)
+timer.daemon = True
+timer.start()
 
 while True:
     # we keep listening for new connections all the time
