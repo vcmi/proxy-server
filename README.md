@@ -1,4 +1,4 @@
-# proxy-server
+# VCMI Proxy Server
 
 The purpose of this program is to connect VCMI users together to allow online multiplayer.
 
