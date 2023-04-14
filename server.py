@@ -82,26 +82,62 @@ def listen_for_client(sender: Sender):
     This function keep listening for a message from `cs` socket
     Whenever a message is received, broadcast it to all other connected clients
     """
-    while True:
-        try:
+    try:
+        while True:
             # keep listening for a message from `cs` socket
-            if sender.isPipe() and sender.client.auth:
-                msg = sender.sock.recv(4096)
-            else:
-                msg = sender.receive_pack()
+            msg = sender.receive_data()
 
             if msg == None or msg == b'':
-                #handleDisconnection(cs)
-                return
+                break
 
-            if not sender.client or sender.isLobby():
+            if not sender.client or not sender.client.auth:
+                if sender.handshake(msg) == False:
+                    break
+
+                #do this only once
+                if sender.isPipe() and sender.client.auth:
+                    #read missing byte
+                    sender.client.prevmessages.append(sender.sock.recv(1))
+                    msg = b'' #reset message to prevent its duplicating
+                    
+                    #search for session
+                    for session in lobby.sessions:
+                        if sender.client.testForSession(session):
+                            sender.client.session = session
+                            session.addConnection(sender.sock, sender.client.isServer(), sender.client.prevmessages)
+                            break
+
+                    if sender.client.session.validPipe(sender.sock):
+                        if len(sender.client.session.pipeMessages(sender.sock)):
+                            sender.client.session.forward_data(sender.sock, b''.join(sender.client.session.pipeMessages(sender.sock)))
+                        
+                        opposite = sender.client.session.getPipe(sender.sock)
+                        if len(sender.client.session.pipeMessages(opposite)):
+                            sender.client.session.forward_data(opposite, b''.join(sender.client.session.pipeMessages(opposite)))
+
+            
+            if sender.isPipe():
+                if not sender.client.auth:
+                    continue #continue handshaking
+
+                if not sender.client.session.validPipe(sender.sock):
+                    if msg != b'':
+                        sender.client.session.pipeMessages(sender.sock).append(msg)
+                    continue
+
+                sender.client.session.forward_data(sender.sock, msg)
+
+
+            if sender.isLobby():
                 lobby.dispatch(sender, msg)
 
-        except Exception as e:
-            # client no longer connected
-            logging.error(f"[!] Error: {e}")
-            #handleDisconnection(cs)
-            return
+    except Exception as e:
+        # client no longer connected
+        logging.error(f"[!] Error: {e}")
+        pass
+    finally:
+        #handleDisconnection(cs)
+        sender.sock.close()
 
 
 while True:

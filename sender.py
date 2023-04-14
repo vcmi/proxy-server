@@ -2,6 +2,7 @@ import socket
 import struct
 from client import Client, ClientLobby, ClientPipe
 
+BUFFER_SIZE = 4096
 
 class Sender:
     address: str #full client address
@@ -37,3 +38,21 @@ class Sender:
         msglen = struct.unpack('<I', raw_msglen)[0]
         # Read the message data
         return self.receive_all(msglen)
+    
+    def receive_data(self):
+        if self.isPipe() and self.client.auth:
+            return self.sock.recv(BUFFER_SIZE)
+        return self.receive_pack()
+    
+    def handshake(self, data):
+        if not self.client:
+            msg = str(data)
+            exchangeMessageFlag = False #flag to identify if message exchange was started
+            if msg.find("Aiya!") != -1:
+                self.client = ClientPipe()
+            else:
+                self.client = ClientLobby()
+
+        self.client.handshake(data)
+
+        

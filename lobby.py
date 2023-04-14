@@ -2,12 +2,8 @@ import re, struct
 import uuid
 from sender import Sender
 import logging
-from client import ClientLobby, ClientPipe
 from room import Room
 from session import Session
-
-PROTOCOL_VERSION_MIN = 1
-PROTOCOL_VERSION_MAX = 4
 
 SYSUSER = "System" #username from whom system messages will be sent
 
@@ -120,7 +116,7 @@ class Lobby:
             msg = f":>>START:{_uuid}"
             self.send(player, msg)
             #remove this connection
-            player.close
+            player.sock.close()
             self.senders.remove(player)
 
         #this room shall not exist anymore
@@ -148,101 +144,13 @@ class Lobby:
 
         return (ttuple[0], ttuple[2])    
 
+
     def dispatch(self, sender: Sender, arr: bytes):
-        if arr == None or len(arr) == 0:
-            return
-
-        if (sender.isPipe() or sender.isLobby() and not sender.client.auth) or (not sender.isPipe() and not sender.isLobby()):
-            logging.debug(f"---- {sender.address} is sending {arr}")
-
-        #check for game mode connection
-        msg = str(arr)
-        exchangeMessageFlag = False #flag to identify if message exchange was started
-        if msg.find("Aiya!") != -1:
-            sender.client = ClientPipe()
-            logging.info("[!] VCMI recognized")
-            STATS["clients"] += 1
-
-        if sender.isPipe():
-            if sender.client.auth: #if already playing - sending raw bytes as is
-                sender.client.prevmessages.append(arr)
-            else:
-                sender.client.prevmessages.append(struct.pack('<I', len(arr)) + arr) #pack message
-                logging.debug("---- packing message")
-                #search fo application type in the message
-                match = re.search(r"\((\w+)\)", msg)
-                _appType = ''
-                if match != None:
-                    _appType = match.group(1)
-                    sender.client.apptype = _appType
-                
-                #extract uuid from message
-                _uuid = arr.decode()
-                logging.debug(f"---- decoding {_uuid}")
-                if not _uuid == '' and not sender.client.apptype == '':
-                    #search for uuid
-                    for session in self.sessions:
-                        #verify uuid of connected application
-                        if _uuid.find(session.host_uuid) != -1 and sender.client.apptype == "server":
-                            session.addConnection(sender.sock, True)
-                            sender.client.session = session
-                            sender.client.auth = True
-                            #read boolean flag for the endian
-                            # this is workaround to send only one remaining byte
-                            # WARNING: reversed byte order is not supported
-                            sender.client.prevmessages.append(sender.sock.recv(1))
-                            exchangeMessageFlag = True
-                            logging.info(f"[S {session.name}]: Bindind {sender.client.apptype} {_uuid}")
-                            break
-
-                        if sender.client.apptype == "client":
-                            for p in session.clients_uuid:
-                                if _uuid.find(p) != -1:
-                                    #client connection
-                                    session.addConnection(sender.sock, False)
-                                    sender.client.session = session
-                                    sender.client.auth = True
-                                    #read boolean flag for the endian
-                                    # this is workaround to send only one remaining byte
-                                    # WARNING: reversed byte order is not supported
-                                    sender.client.prevmessages.append(sender.sock.recv(1))
-                                    exchangeMessageFlag = True
-                                    logging.info(f"[S {session.name}] Binding {sender.client.apptype} {_uuid}")
-                                    break
         
-        #intialize lobby mode
-        if not sender.isLobby():
-            if len(arr) < 2: 
-                logging.critical("[!] Error: unknown client tries to connect")
-                #TODO: block address? close the socket?
-                return
-
-            sender.client = ClientLobby()
-
-            # first byte is protocol version
-            sender.client.protocolVersion = arr[0]
-            if arr[0] < PROTOCOL_VERSION_MIN or arr[0] > PROTOCOL_VERSION_MAX:
-                logging.critical(f"[!] Error: client {sender.address} has incompatbile protocol version {arr[0]}")
-                self.send(sender, ":>>ERROR:Cannot connect to remote server due to protocol incompatibility")
-                return
-
-            # second byte is an encoding str size
-            if arr[1] == 0:
-                sender.client.encoding = "utf8"
-            else:
-                if len(arr) < arr[1] + 2:
-                    logging.critical(f"[!] Client {sender.address} message is incorrect: {arr}")
-                    self.send(sender, ":>>ERROR:Protocol error")
-                    return
-                # read encoding string
-                sender.client.encoding = arr[2:(arr[1] + 2)].decode(errors='ignore')
-                arr = arr[(arr[1] + 2):]
-                msg = str(arr)
-
         msg = arr.decode(encoding=sender.client.encoding, errors='replace')
         _open = msg.partition('<')
         _close = _open[2].partition('>')
-        if _open[0] != '' or _open[1] == '' or _open[2] == '' or _close[0] == '' or _close[1] == '':
+        if _open[1] == '' or _open[2] == '' or _close[0] == '' or _close[1] == '':
             logging.error(f"[!] Incorrect message from {sender.address}: {msg}")
             return
 
@@ -411,8 +319,7 @@ class Lobby:
 
         if tag == "PSWD" and sender.client.auth and sender.client.joined:
             r = self.rooms[sender.client.room_name]
-  
-            
+
 
         #[PROTOCOL 4] set game mode
         if tag == "HOSTMODE" and sender.client.auth and sender.client.joined:
@@ -545,4 +452,6 @@ class Lobby:
         if tag == "ALIVE" and sender.client.auth:
             pass
 
-        self.dispatch(sender, (_nextTag[1] + _nextTag[2]).encode())
+        arr = (_nextTag[1] + _nextTag[2]).encode()
+        if arr and len(arr) > 0:
+            self.dispatch(sender, arr)
