@@ -77,6 +77,14 @@ logging.info(f"[!] Listening as {SERVER_HOST}:{SERVER_PORT}")
 
 lobby = Lobby()
 
+def handle_disconnection(sender: Sender):
+    if sender.isLobby():
+        lobby.disconnect(sender)
+    if sender.isPipe() and sender.client.session:
+        sender.client.session.removeConnection(sender.sock)
+    sender.sock.close()
+
+
 def listen_for_client(sender: Sender):
     """
     This function keep listening for a message from `cs` socket
@@ -134,10 +142,10 @@ def listen_for_client(sender: Sender):
     except Exception as e:
         # client no longer connected
         logging.error(f"[!] Error: {e}")
+        print("[!] Error: {e}")
         pass
     finally:
-        #handleDisconnection(cs)
-        sender.sock.close()
+        handle_disconnection(sender)
 
 
 while True:

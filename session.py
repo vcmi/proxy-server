@@ -67,8 +67,10 @@ class Session:
 
     def removeConnection(self, conn: socket):
         if self.validPipe(conn):
+            opposite = self.getPipe(conn)
             self.pipes.pop(self.getPipe(conn))
             self.pipes.pop(conn)
+            opposite.close()
 
         newConnections = []
         for c in self.connections:

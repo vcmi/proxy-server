@@ -27,6 +27,29 @@ class Lobby:
         self.rooms = {}
         self.senders = []
 
+    def disconnect(self, sender: Sender):
+        #cleanup room
+        if sender.client.joined and sender.client.room_name in self.rooms.keys():
+            r = self.rooms[sender.client.room_name]
+            if not r.started:
+                if r.host == sender:
+                    #destroy the session, sending messages inside the function
+                    self.deleteRoom(r)
+                else:
+                    r.leave(sender)
+                    sender.client.joined = False
+                    message = f":>>KICK:{sender.client.room_name}:{sender.client.username}"
+                    self.broadcast(r.players, message.encode())
+                self.updateStatus(r)
+                self.updateRooms()
+        
+        self.senders.remove(sender)
+        
+        #updating list of users
+        for cl in self.senders:
+            if cl.isLobby() and cl.client.auth and cl.client.protocolVersion >= 4:
+                self.sendUsers(cl)
+
     #sending message for lobby players
     def send(self, sender: Sender, message: str):
         if sender in self.senders:
@@ -115,6 +138,8 @@ class Lobby:
             session.clients_uuid.append(_uuid)
             msg = f":>>START:{_uuid}"
             self.send(player, msg)
+
+        for player in room.players:
             #remove this connection
             player.sock.close()
             self.senders.remove(player)
