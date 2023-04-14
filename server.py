@@ -82,6 +82,7 @@ def handle_disconnection(sender: Sender):
         lobby.disconnect(sender)
     if sender.isPipe() and sender.client.session:
         sender.client.session.removeConnection(sender.sock)
+        lobby.senders.remove(sender)
     sender.sock.close()
 
 
@@ -122,6 +123,11 @@ def listen_for_client(sender: Sender):
                         opposite = sender.client.session.getPipe(sender.sock)
                         if len(sender.client.session.pipeMessages(opposite)):
                             sender.client.session.forward_data(opposite, b''.join(sender.client.session.pipeMessages(opposite)))
+                    
+                    BUFFER_SIZE = 1024 * 1024  # Example buffer size of 1MB
+                    sender.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, BUFFER_SIZE)
+                    sender.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, BUFFER_SIZE)
+                    sender.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
             
             if sender.isPipe():
