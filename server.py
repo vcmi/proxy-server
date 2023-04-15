@@ -7,7 +7,7 @@ from sender import Sender
 from lobby import Lobby, STATS
 
 
-PROXYSERVER_VERSION = "0.5.0"
+PROXYSERVER_VERSION = "0.5.1"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
@@ -36,7 +36,7 @@ for arg in sys.argv[1:]:
     if element[0] == "port":
         num = int(element[2])
         if num == 0:
-            print(f"Cannot listn port 0, continue with default {SERVER_PORT}")
+            print(f"Cannot listen port 0, continue with default {SERVER_PORT}")
             continue
         SERVER_PORT = num
 
@@ -78,12 +78,15 @@ logging.info(f"[!] Listening as {SERVER_HOST}:{SERVER_PORT}")
 lobby = Lobby()
 
 def handle_disconnection(sender: Sender):
-    if sender.isLobby():
-        lobby.disconnect(sender)
-    if sender.isPipe() and sender.client.session:
-        sender.client.session.removeConnection(sender.sock)
-        lobby.senders.remove(sender)
-    sender.sock.close()
+    try:
+        if sender.isLobby():
+            lobby.disconnect(sender)
+        if sender.isPipe():
+            if sender.client.session:
+                sender.client.session.removeConnection(sender.sock)
+            lobby.senders.remove(sender)
+    finally:
+        sender.sock.close()
 
 
 def listen_for_client(sender: Sender):
@@ -101,6 +104,10 @@ def listen_for_client(sender: Sender):
 
             if not sender.client or not sender.client.auth:
                 if sender.handshake(msg) == False:
+                    if sender.client:
+                        logging.error(f"[!] {sender.client.status}")
+                        if sender.isLobby():
+                            lobby.send(sender, f":>>ERROR:{sender.client.status}")
                     break
 
                 #do this only once
@@ -149,7 +156,7 @@ def listen_for_client(sender: Sender):
         # client no longer connected
         logging.error(f"[!] Error: {e}")
         print("[!] Error: {e}")
-        pass
+        
     finally:
         handle_disconnection(sender)
 

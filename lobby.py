@@ -102,15 +102,15 @@ class Lobby:
                 self.sendRooms(s)
 
 
-    def deleteRoom(self, room_name: str):
-        msg = f":>>KICK:{room_name}"
-        for player in self.rooms[room_name].players:
+    def deleteRoom(self, room: Room):
+        msg = f":>>KICK:{room.name}"
+        for player in room.players:
             player.client.joined = False
             msg2 = msg + f":{player.client.username}"
             self.send(player, msg2)
         
-        logging.info(f"[R {room_name}]: Destroying room")
-        self.rooms.pop(room_name)
+        logging.info(f"[R {room.name}]: Destroying room")
+        self.rooms.pop(room.name)
 
 
     def updateStatus(self, room: Room):
@@ -304,7 +304,7 @@ class Lobby:
 
                 if int(tag_value) < 2 or int(tag_value) > 8:
                     #refuse and cleanup room
-                    self.deleteRoom(r.name)
+                    self.deleteRoom(r)
                     message = f":>>ERROR:Cannot create room with invalid amount of players"
                     self.send(sender, message)
                     return
@@ -387,7 +387,7 @@ class Lobby:
             r = self.rooms[sender.client.room_name]
             if r.host == sender:
                 #destroy the session, sending messages inside the function
-                self.deleteRoom(r.name)
+                self.deleteRoom(r)
             else:
                 message = f":>>KICK:{r.name}:{sender.client.username}"
                 self.broadcast(r.players, message)

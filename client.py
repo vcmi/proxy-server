@@ -4,9 +4,11 @@ from session import Session
 
 class Client:
     auth: bool
+    status: str
 
     def __init__(self) -> None:
         self.auth = False
+        self.status = ""
 
     def handshake(self, data: bytes):
         return True
@@ -35,11 +37,13 @@ class ClientLobby(Client):
 
     def handshake(self, data: bytes):
         if len(data) < 2:
+            self.status = "Too short username"
             return False
         
         # first byte is protocol version
         self.protocolVersion = data[0]
         if self.protocolVersion < PROTOCOL_VERSION_MIN or self.protocolVersion > PROTOCOL_VERSION_MAX:
+            self.status = "Cannot connect to remote server due to protocol incompatibility"
             #logging.critical(f"[!] Error: client {sender.address} has incompatbile protocol version {arr[0]}")
             #self.send(sender, ":>>ERROR:Cannot connect to remote server due to protocol incompatibility")
             return False
@@ -49,6 +53,7 @@ class ClientLobby(Client):
             self.encoding = "utf8"
         else:
             if len(data) < data[1] + 2:
+                self.status = "Protocol error or incorrect encoding"
                 #logging.critical(f"[!] Client {sender.address} message is incorrect: {arr}")
                 #self.send(sender, ":>>ERROR:Protocol error")
                 return False
@@ -94,6 +99,7 @@ class ClientPipe(Client):
         match = re.search(r"\((\w+)\)", str(data))
         if match:
             self.apptype = match.group(1)
+            self.status = f"Client type {self.apptype}, continue..."
         
         #extract uuid from message
         _uuid = data.decode()
@@ -102,34 +108,7 @@ class ClientPipe(Client):
             #search for uuid
             self.uuid = _uuid
             self.auth = True
-            """ for session in self.sessions:
-                #verify uuid of connected application
-                if _uuid.find(session.host_uuid) != -1 and sender.client.apptype == "server":
-                    session.addConnection(sender.sock, True)
-                    sender.client.session = session
-                    sender.client.auth = True
-                    #read boolean flag for the endian
-                    # this is workaround to send only one remaining byte
-                    # WARNING: reversed byte order is not supported
-                    sender.client.prevmessages.append(sender.sock.recv(1))
-                    exchangeMessageFlag = True
-                    logging.info(f"[S {session.name}]: Bindind {sender.client.apptype} {_uuid}")
-                    break
-
-                if sender.client.apptype == "client":
-                    for p in session.clients_uuid:
-                        if _uuid.find(p) != -1:
-                            #client connection
-                            session.addConnection(sender.sock, False)
-                            sender.client.session = session
-                            sender.client.auth = True
-                            #read boolean flag for the endian
-                            # this is workaround to send only one remaining byte
-                            # WARNING: reversed byte order is not supported
-                            sender.client.prevmessages.append(sender.sock.recv(1))
-                            exchangeMessageFlag = True
-                            logging.info(f"[S {session.name}] Binding {sender.client.apptype} {_uuid}")
-                            break """
+            self.status = f"Success! Client type {self.apptype}, uuid {self.uuid}"
         
         return True
 
