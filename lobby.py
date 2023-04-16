@@ -110,7 +110,7 @@ class Lobby:
             self.send(player, msg2)
         
         logging.info(f"[R {room.name}]: Destroying room")
-        self.rooms.pop(room.name)
+        self.rooms.pop(room.name, None)
 
 
     def updateStatus(self, room: Room):
@@ -146,7 +146,7 @@ class Lobby:
 
         #this room shall not exist anymore
         logging.info(f"[R {room.name}] Exit room as session {session.name} was started")
-        self.rooms.pop(room.name)
+        self.rooms.pop(room.name, None)
 
         
     def startRoomIfReady(self, room: Room) -> bool:

@@ -7,7 +7,7 @@ from sender import Sender
 from lobby import Lobby, STATS
 
 
-PROXYSERVER_VERSION = "0.5.1"
+PROXYSERVER_VERSION = "0.5.2"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
@@ -84,7 +84,11 @@ def handle_disconnection(sender: Sender):
         if sender.isPipe():
             if sender.client.session:
                 sender.client.session.removeConnection(sender.sock)
+                if len(sender.client.session.connections) == 0:
+                    lobby.sessions.remove(sender.client.session)
             lobby.senders.remove(sender)
+    except Exception as e:
+        logging.critical(f"[!] Unhandled execption: {e}")
     finally:
         sender.sock.close()
 
