@@ -59,7 +59,10 @@ class Lobby:
     def broadcast(self, senders: list, message: str):
         for sender in senders:
             if sender.isLobby() and sender.client.auth:
-                self.send(sender, message)
+                try:
+                    self.send(sender, message)
+                except Exception as e:
+                    logging.warn(f"[*] Can't broadcast to {sender.client.username}: {e}")
 
 
     def sendRooms(self, sender: Sender):
@@ -107,7 +110,10 @@ class Lobby:
         for player in room.players:
             player.client.joined = False
             msg2 = msg + f":{player.client.username}"
-            self.send(player, msg2)
+            try:
+                self.send(player, msg2)
+            except Exception as e:
+                logging.warn(f"[*] Can't send a destroying room message to {player.client.username}: {e}")
         
         logging.info(f"[R {room.name}]: Destroying room")
         self.rooms.pop(room.name, None)
@@ -131,13 +137,20 @@ class Lobby:
         hostMessage = f":>>HOST:{session.host_uuid}:{room.joined - 1}" #one client will be connected locally
         logging.debug(f"---- host: {session.host_uuid} connections {room.joined - 1}")
         #host message must be before start message
-        self.send(room.host, hostMessage)
+        try:
+            self.send(room.host, hostMessage)
 
-        for player in room.players:
-            _uuid = str(uuid.uuid4())
-            session.clients_uuid.append(_uuid)
-            msg = f":>>START:{_uuid}"
-            self.send(player, msg)
+            for player in room.players:
+                _uuid = str(uuid.uuid4())
+                session.clients_uuid.append(_uuid)
+                msg = f":>>START:{_uuid}"
+                try:
+                    self.send(player, msg)
+                except Exception as e:
+                    logging.warn(f"[*] Can't start session {session.name} for {player.client.username}: {e}")
+
+        except Exception as e:
+            logging.critical(f"[!] Can't start session {session.name}: {e}")
 
         for player in room.players:
             #remove this connection
@@ -195,7 +208,13 @@ class Lobby:
                 self.send(sender, f":>>ERROR:Too short username {tag_value}")
                 return
 
-            if tag_value == SYSUSER or tag_value == "all" or len(tag_value.split(" ")) > 1:
+            if tag_value == SYSUSER or tag_value == "all":
+                logging.warning(f"[!] Incorrect username from {sender.address}: {tag_value}")
+                self.send(sender, f":>>ERROR:Invalid username")
+                return
+            
+            match = re.search(r"^[\w.%+-]+$", tag_value)
+            if not match:
                 logging.warning(f"[!] Incorrect username from {sender.address}: {tag_value}")
                 self.send(sender, f":>>ERROR:Invalid username")
                 return
@@ -217,6 +236,7 @@ class Lobby:
             for cl in self.senders:
                 if cl.isLobby() and cl.client.protocolVersion >= 4:
                     self.sendUsers(cl)
+            logging.info(f"[*] Userlist updated and broadcasted")
             #authorizing user
             sender.client.auth = True
             self.sendRooms(sender)
