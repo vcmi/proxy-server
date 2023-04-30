@@ -297,6 +297,10 @@ class Lobby:
                     self.broadcast(r.players, message)
                     self.updateStatus(r)
                     self.updateRooms()
+                    #[PROTOCOL 4] send host mode to joined player
+                    if sender.client.protocolVersion >= 4:
+                        message = f":>>GAMEMODE:{r.gamemode}"
+                        self.send(sender, message)
                     #send instructions to player
                     message = f":>>MSG:{SYSUSER}:You are in the room chat. To send message to global chat, type @all"
                     self.send(sender, message)
