@@ -7,7 +7,7 @@ from sender import Sender
 from lobby import Lobby, STATS
 
 
-PROXYSERVER_VERSION = "0.5.4"
+PROXYSERVER_VERSION = "0.5.5"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
@@ -134,7 +134,7 @@ def listen_for_client(sender: Sender):
                             session.addConnection(sender.sock, sender.client.isServer(), sender.client.prevmessages)
                             break
 
-                    if sender.client.session.validPipe(sender.sock):
+                    if sender.client.session and sender.client.session.validPipe(sender.sock):
                         if len(sender.client.session.pipeMessages(sender.sock)):
                             sender.client.session.forward_data(sender.sock, b''.join(sender.client.session.pipeMessages(sender.sock)))
                         
@@ -152,6 +152,9 @@ def listen_for_client(sender: Sender):
                 if not sender.client.auth:
                     continue #continue handshaking
 
+                if not sender.client.session:
+                    break #cannot connect player - break connection
+
                 if not sender.client.session.validPipe(sender.sock):
                     if msg != b'':
                         sender.client.session.pipeMessages(sender.sock).append(msg)
@@ -166,7 +169,7 @@ def listen_for_client(sender: Sender):
     except Exception as e:
         # client no longer connected
         logging.error(f"[!] Error: {e}")
-        print("[!] Error: {e}")
+        print(f"[!] Error: {e}")
         
     finally:
         handle_disconnection(sender)

@@ -154,8 +154,15 @@ class Lobby:
 
         for player in room.players:
             #remove this connection
-            player.sock.close()
-            self.senders.remove(player)
+            try:
+                player.sock.close()
+            except Exception as e:
+                logging.error(f"[*] Can't close connection for session {session.name}: {e}")
+
+            try:
+                self.senders.remove(player)
+            except ValueError as e:
+                logging.warning(f"[*] Exception during disconnecion: {e}")
 
         #this room shall not exist anymore
         logging.info(f"[R {room.name}] Exit room as session {session.name} was started")

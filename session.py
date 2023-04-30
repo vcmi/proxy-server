@@ -70,7 +70,10 @@ class Session:
             opposite = self.getPipe(conn)
             self.pipes.pop(self.getPipe(conn), None)
             self.pipes.pop(conn, None)
-            opposite.close()
+            try:
+                opposite.close()
+            except Exception as e:
+                pass #continue
 
         newConnections = []
         for c in self.connections:
