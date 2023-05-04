@@ -43,7 +43,8 @@ class Lobby:
                 self.updateStatus(r)
                 self.updateRooms()
         
-        self.senders.remove(sender)
+        if sender in self.senders:
+            self.senders.remove(sender)
         
         #updating list of users
         for cl in self.senders:
@@ -159,10 +160,8 @@ class Lobby:
             except Exception as e:
                 logging.error(f"[*] Can't close connection for session {session.name}: {e}")
 
-            try:
+            if player in self.senders:
                 self.senders.remove(player)
-            except ValueError as e:
-                logging.warning(f"[*] Exception during disconnecion: {e}")
 
         #this room shall not exist anymore
         logging.info(f"[R {room.name}] Exit room as session {session.name} was started")
@@ -393,7 +392,7 @@ class Lobby:
 
 
         #[PROTOCOL 2] receive list of mods
-        if tag == "MODS" and sender.client.auth and sender.client.joined:
+        if tag == "MODS" and sender.client.auth and sender.client.joined and sender.client.room_name in self.rooms:
             mods = tag_value.split(";") #list of modname&modverion
             r = self.rooms[sender.client.room_name]
 
@@ -411,7 +410,10 @@ class Lobby:
             mods_string = ':'.join(mods).replace("&", ":")
             message = f":>>MODSOTHER:{sender.client.username}:{len(mods)}:{mods_string}"
             if len(mods) > 0 and r.host.client.protocolVersion >= 3:
-                self.send(r.host, message)
+                try:
+                    self.send(r.host, message)
+                except Exception as e:
+                    logging.error(f"[!] Cannot send message to room {sender.client.room_name} host")
 
         #leaving session
         if tag == "LEAVE" and sender.client.auth and sender.client.joined and sender.client.room_name == tag_value:

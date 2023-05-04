@@ -33,9 +33,9 @@ class Room:
             self.joined += 1
 
     def leave(self, player: Sender):
-        if not self.isJoined(player) or player == self.host:
+        if not self.isJoined(player) or player == self.host or player not in self.players:
             return
-
+        
         self.players.remove(player)
         self.joined -= 1
 

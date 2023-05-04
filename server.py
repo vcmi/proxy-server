@@ -7,7 +7,7 @@ from sender import Sender
 from lobby import Lobby, STATS
 
 
-PROXYSERVER_VERSION = "0.5.5"
+PROXYSERVER_VERSION = "0.5.6"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
