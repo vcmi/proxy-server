@@ -28,6 +28,10 @@ class Lobby:
         self.senders = []
 
     def disconnect(self, sender: Sender):
+        
+        if sender in self.senders:
+            self.senders.remove(sender)
+
         #cleanup room
         if sender.client.joined and sender.client.room_name in self.rooms.keys():
             r = self.rooms[sender.client.room_name]
@@ -40,11 +44,8 @@ class Lobby:
                     sender.client.joined = False
                     message = f":>>KICK:{sender.client.room_name}:{sender.client.username}"
                     self.broadcast(r.players, message.encode())
-                self.updateStatus(r)
+                    self.updateStatus(r)
                 self.updateRooms()
-        
-        if sender in self.senders:
-            self.senders.remove(sender)
         
         #updating list of users
         for cl in self.senders:
