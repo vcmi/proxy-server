@@ -6,7 +6,9 @@ from threading import Thread
 from sender import Sender
 from lobby import Lobby, STATS
 
-
+# Major version: increase if backword compatibility with old protocols is not supported
+# Minor version: increase if new functional changes appeared, more functionality in the protocol
+# Patch version: increase for any internal change/bugfix, not related to vcmi functionality
 PROXYSERVER_VERSION = "0.5.7"
 
 LOG_LEVEL = logging.INFO
@@ -24,6 +26,7 @@ SERVER_PORT = 5002 # port we want to use
 
 MAX_CONNECTIONS = 50
 
+# command line arcgunents parsing and support
 for arg in sys.argv[1:]:
     element = arg.partition("=")
     if element[1] != "=":
@@ -78,6 +81,10 @@ logging.info(f"[!] Listening as {SERVER_HOST}:{SERVER_PORT}")
 lobby = Lobby()
 
 def handle_disconnection(sender: Sender):
+    """
+    Handles disconnnection of socket in current thread.
+    Called in case of any socket method throws
+    """
     try:
         if sender.isLobby():
             lobby.disconnect(sender)
@@ -111,23 +118,25 @@ def listen_for_client(sender: Sender):
             msg = sender.receive_data()
 
             if msg == None or msg == b'':
-                break
+                break # receiving empty message means that TCP connection is stopped
 
             if not sender.client or not sender.client.auth:
+                # client isn't identified yet
                 if sender.handshake(msg) == False:
-                    if sender.client:
+                    if sender.client: # partially authorized client - we can send an error message
                         logging.error(f"[!] {sender.client.status}")
                         if sender.isLobby():
                             lobby.send(sender, f":>>ERROR:{sender.client.status}")
-                    break
+                    break # handle disconnection if handshakign is unsuccessfull
 
-                #do this only once
+                # this codeblock if needed to properly support game connection after handshaking
+                # need to do this only once, which is ensured by setting `auth`` to true
                 if sender.isPipe() and sender.client.auth:
                     #read missing byte
                     sender.client.prevmessages.append(sender.sock.recv(1))
                     msg = b'' #reset message to prevent its duplicating
                     
-                    #search for session
+                    # search for session and register connection
                     for session in lobby.sessions:
                         if sender.client.testForSession(session):
                             sender.client.session = session
@@ -135,9 +144,12 @@ def listen_for_client(sender: Sender):
                             break
 
                     if sender.client.session and sender.client.session.validPipe(sender.sock):
+                        # session has been found, send all pending data to connected client
                         if len(sender.client.session.pipeMessages(sender.sock)):
                             sender.client.session.forward_data(sender.sock, b''.join(sender.client.session.pipeMessages(sender.sock)))
                         
+                        # send all received data to opposite client
+                        # after this step data exchange is finally started
                         opposite = sender.client.session.getPipe(sender.sock)
                         if len(sender.client.session.pipeMessages(opposite)):
                             sender.client.session.forward_data(opposite, b''.join(sender.client.session.pipeMessages(opposite)))
@@ -156,14 +168,17 @@ def listen_for_client(sender: Sender):
                     break #cannot connect player - break connection
 
                 if not sender.client.session.validPipe(sender.sock):
+                    # opposite client still not connected - wait for them and store all pending messages
                     if msg != b'':
                         sender.client.session.pipeMessages(sender.sock).append(msg)
                     continue
 
+                # connection established - just forward data
                 sender.client.session.forward_data(sender.sock, msg)
 
 
             if sender.isLobby():
+                # for lobby connection dispatch lobby message
                 lobby.dispatch(sender, msg)
 
     except Exception as e:

@@ -3,8 +3,11 @@ import struct
 from session import Session
 
 class Client:
+    """
+    Abstract client class with handshaking interface
+    """
     auth: bool
-    status: str
+    status: str # Information field to store error message which can be transferred to client
 
     def __init__(self) -> None:
         self.auth = False
@@ -17,12 +20,15 @@ PROTOCOL_VERSION_MIN = 1
 PROTOCOL_VERSION_MAX = 4
 
 class ClientLobby(Client):
-    joined: bool
-    username: str
-    room_name: str
-    protocolVersion: int
-    encoding: str
-    ready: bool
+    """
+    Lobby client type
+    """
+    joined: bool #is joined to some room
+    username: str #usename specified in lobby prior connection
+    room_name: str #if joined to the room, name of this room is stored here
+    protocolVersion: int #client protocol version
+    encoding: str #client string encoding
+    ready: bool #is ready for start session
     vcmiversion: str #TODO: check version compatibility
 
     def __init__(self) -> None:
@@ -37,6 +43,7 @@ class ClientLobby(Client):
 
     def handshake(self, data: bytes):
         if len(data) < 2:
+            # actually could be different errors, but assuming that just name isn't specified
             self.status = "Too short username"
             return False
         
@@ -67,7 +74,7 @@ class ClientLobby(Client):
 class ClientPipe(Client):
     apptype: str #client/server
     uuid: str
-    prevmessages: list
+    prevmessages: list #message queue to be send to opposite client
     session: Session
 
     def __init__(self) -> None:
