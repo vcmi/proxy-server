@@ -69,36 +69,36 @@ This file describes only server protocol. See vcmi documentation for client prot
 
 Overall format of server protocol: `<COMMAND>ARGUMENT(s)`
 
-- <GREETINGS>username
+- `<GREETINGS>username`
   - expected to be first command. Autorizes client in lobby
-- <VER>version
+- `<VER>version`
   - full vcmi version
-- <MSG>message
+- `<MSG>message`
   - ask server to broadcast message to other players. Can have target like @username or @all to send to everyone
-- <NEW>name
+- `<NEW>name`
   - ask server to create new room with name specified. Client will be joined to this room as host.
-- <PSWD>password
+- `<PSWD>password`
   - if client is a host of room, new room password will be set. Otherwise, password will be checked before joining to the room
-- <COUNT>players
+- `<COUNT>players`
   - sets total amount of players to be set for new room
-- <JOIN>name
+- `<JOIN>name`
   - asks server to join player to the room with name specified
-- <HOSTMODE>mode
+- `<HOSTMODE>mode`
   - asks server to set room into mode specified (must be integer) and broadcast it
-- <MODS>mods
+- `<MODS>mods`
   - notifies server about mods client has. Mods has following format: `mod1_name&mod1_version;mod2_name&mod2_version;...`
-- <LEAVE>name
+- `<LEAVE>name`
   - ask server to leave room with name specified
   - If client is a host for that room, then room will be destroyed
-- <KICK>username
+- `<KICK>username`
   - ask sever to kick player with username specified from room which current client is joined
   - client must be room host
-- <READY>name
+- `<READY>name`
   - notifies server about client reasiness for room name specified. Client must be joined to this room
-- <FORCESTART>name
+- `<FORCESTART>name`
   - asks server to start session for room with name specified immediately.
   - This command used to ensure backward compatibility with older clients who cannot send `READY` command
-- <ROOT>field
+- `<ROOT>field`
   - debug command to be typed manually. Used to obtain statistic from the server. See `lobby.py` for information about fields
-- <ALIVE>any
+- `<ALIVE>any`
   - obsolete command, unused. Server ignores it.
