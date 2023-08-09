@@ -9,7 +9,7 @@ from lobby import Lobby, STATS
 # Major version: increase if backword compatibility with old protocols is not supported
 # Minor version: increase if new functional changes appeared, more functionality in the protocol
 # Patch version: increase for any internal change/bugfix, not related to vcmi functionality
-PROXYSERVER_VERSION = "0.5.7"
+PROXYSERVER_VERSION = "0.5.8"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
@@ -103,6 +103,8 @@ def handle_disconnection(sender: Sender):
     
     try:
         sender.sock.close()
+        if sender in lobby.senders:
+            lobby.senders.remove(sender)
     except Exception as e:
         logging.critical(f"[!] Cannot close socket: {e}")
 
