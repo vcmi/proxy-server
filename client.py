@@ -17,7 +17,7 @@ class Client:
         return True
 
 PROTOCOL_VERSION_MIN = 1
-PROTOCOL_VERSION_MAX = 4
+PROTOCOL_VERSION_MAX = 5
 
 class ClientLobby(Client):
     """
@@ -30,6 +30,7 @@ class ClientLobby(Client):
     encoding: str #client string encoding
     ready: bool #is ready for start session
     vcmiversion: str #TODO: check version compatibility
+    channel: str #current chat channel
 
     def __init__(self) -> None:
         super().__init__()
@@ -40,6 +41,7 @@ class ClientLobby(Client):
         self.encoding = 'utf8'
         self.ready = False
         self.vcmiversion = ""
+        self.channel = "global"
 
     def handshake(self, data: bytes):
         if len(data) < 2:

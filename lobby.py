@@ -6,6 +6,8 @@ from room import Room
 from session import Session
 
 SYSUSER = "System" #username from whom system messages will be sent
+RESERVED_USERNAMES = [SYSUSER, "all", "room"]
+CHANNELS = ["global", "room"]
 
 STATS = {
     "uniques" : set(), #address
@@ -21,16 +23,24 @@ class Lobby:
     sessions: list
     rooms: dict
     senders: list
+    channels: dict
 
     def __init__(self) -> None:
         self.sessions = []
         self.rooms = {}
         self.senders = []
+        self.channels = {}
+        for c in CHANNELS:
+            self.channels[c] = []
 
     def disconnect(self, sender: Sender):
         
         if sender in self.senders:
             self.senders.remove(sender)
+        
+        for c in self.channels.keys():
+            if sender in self.channels[c]:
+                self.channels[c].remove(sender)
 
         #cleanup room
         if sender.client.joined and sender.client.room_name in self.rooms.keys():
@@ -97,7 +107,6 @@ class Lobby:
         msg = f":>>MSG:{SYSUSER}:Here available {len(lobby_users) - 1} users, currently playing {len(play_users)}"
         if sender.client.protocolVersion < 4:
             msg += "\n Send <HERE> to see people names in the chat"
-        msg += "\n Send direct message by typing @username"
         self.send(sender, msg)
 
 
@@ -215,9 +224,9 @@ class Lobby:
                 self.send(sender, f":>>ERROR:Too short username {tag_value}")
                 return
 
-            if tag_value == SYSUSER or tag_value == "all":
+            if tag_value in RESERVED_USERNAMES:
                 logging.warning(f"[!] Incorrect username from {sender.address}: {tag_value}")
-                self.send(sender, f":>>ERROR:Invalid username")
+                self.send(sender, f":>>ERROR:Username {tag_value} is reserved by system")
                 return
             
             match = re.search(r"^[\w.%+-]+$", tag_value)
@@ -246,6 +255,7 @@ class Lobby:
             logging.info(f"[*] Userlist updated and broadcasted")
             #authorizing user
             sender.client.auth = True
+            self.channels[sender.client.channel].append(sender)
             self.sendRooms(sender)
             self.sendCommonInfo(sender)
 
@@ -256,18 +266,39 @@ class Lobby:
 
         #message received
         if tag == "MSG" and sender.client.auth:
-            target = self.messageTarget(tag_value)
-            targetClients = [i for i in self.senders if i.isLobby()]
-            if sender.client.joined and target[0] != "all":
-                targetClients = self.rooms[sender.client.room_name].players #send message only to players in the room
-            
-            if target[0] != "" and target[0] != "all":
-                for cl in targetClients:
-                    if cl.client.username == target[0]:
-                        targetClients = [cl, sender]
+            targetClients = [i for i in self.channels[sender.client.channel] if i.isLobby()]
 
-            message = f":>>MSG:{sender.client.username}:{target[1]}"
+            if sender.client.channel == "global": #send to all clients
+                targetClients = [i for i in self.senders if i.isLobby()]
+            
+            if sender.client.channel == "room" and sender.client.joined:
+                targetClients = self.rooms[sender.client.room_name].players #send message only to players in the room
+
+            message = f":>>MSGCH:{sender.client.username}:{sender.client.channel}:{tag_value}"
+            if sender.client.protocolVersion <= 4: #compatibility with older protocols
+                message = f":>>MSG:{sender.client.username}:{tag_value}"
+
             self.broadcast(targetClients, message)
+
+        #[PROTOCOL 5] set channel
+        if tag == "CHANNEL" and sender.client.auth:
+            if tag_value not in self.channels.keys():
+                #channel doesn't exist
+                message = f":>>ERROR:Cannot create session with name {tag_value}, session with this name already exists"
+                self.send(sender, message)
+                return
+            
+            if sender.client.channel == tag_value:
+                #client is already in the channel
+                return
+            
+            #move client to the new channel
+            prevChannel = sender.client.channel
+            self.channels[prevChannel].remove(sender)
+            self.channels[tag_value].append(sender)
+            sender.client.channel = tag_value
+            message = f":>>CHANNEL:{tag_value}"
+            self.send(sender, message)
 
         #new room
         if tag == "NEW" and sender.client.auth and not sender.client.joined:
@@ -308,9 +339,12 @@ class Lobby:
                     if sender.client.protocolVersion >= 4:
                         message = f":>>GAMEMODE:{r.gamemode}"
                         self.send(sender, message)
-                    #send instructions to player
-                    message = f":>>MSG:{SYSUSER}:You are in the room chat. To send message to global chat, type @all"
-                    self.send(sender, message)
+                    
+                    if sender.client.protocolVersion <= 4:
+                        #send instructions to player
+                        message = f":>>MSG:{SYSUSER}:You are in the room chat."
+                        self.send(sender, message)
+                        
                     #verify version and send warning
                     host_sender = r.host
                     if sender.client.vcmiversion != host_sender.client.vcmiversion:
@@ -349,7 +383,7 @@ class Lobby:
                 self.updateStatus(r)
                 self.updateRooms()
                 #send instructions to player
-                message = f":>>MSG:{SYSUSER}:You are in the room chat. To send message to global chat, type @all"
+                message = f":>>MSG:{SYSUSER}:You are in the room chat."
                 self.send(sender, message)
 
         #join session
@@ -498,7 +532,7 @@ class Lobby:
             if sender.client.protocolVersion >= 4:
                 self.sendUsers(sender)
             else:
-                targetClients = [i for i in self.senders if i.isLobby()]
+                targetClients = [i for i in self.channels[sender.client.channel] if i.isLobby()]
                 message = f":>>MSG:{SYSUSER}:People in lobby"
             
                 for cl in targetClients:
