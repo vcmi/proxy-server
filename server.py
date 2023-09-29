@@ -2,14 +2,14 @@ import logging
 import socket
 import sys
 from multiprocessing import Process
-from threading import Thread
+from threading import Thread, Timer
 from sender import Sender
 from lobby import Lobby, STATS
 
 # Major version: increase if backword compatibility with old protocols is not supported
 # Minor version: increase if new functional changes appeared, more functionality in the protocol
 # Patch version: increase for any internal change/bugfix, not related to vcmi functionality
-PROXYSERVER_VERSION = "0.6.0"
+PROXYSERVER_VERSION = "0.6.1"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
@@ -80,6 +80,11 @@ logging.info(f"[!] Listening as {SERVER_HOST}:{SERVER_PORT}")
 
 lobby = Lobby()
 
+def removeSession(session):
+    session.timer = None
+    if len(session.connections) == 0:
+        lobby.sessions.remove(session)
+
 def handle_disconnection(sender: Sender):
     """
     Handles disconnnection of socket in current thread.
@@ -93,7 +98,11 @@ def handle_disconnection(sender: Sender):
                 sender.client.session.removeConnection(sender.sock)
                 try:
                     if len(sender.client.session.connections) == 0:
-                        lobby.sessions.remove(sender.client.session)
+                        if sender.client.session.timer != None:
+                            sender.client.session.timer.cancel()
+                        sender.client.session.timer = Timer(300, removeSession, args = [sender.client.session])
+                        sender.client.session.timer.start()
+                        
                     lobby.senders.remove(sender)
                 except ValueError as e:
                     logging.warning(f"[*] Exception during disconnecion: {e}")

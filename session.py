@@ -1,5 +1,5 @@
 import socket
-
+from threading import Timer
 
 class GameConnection:
     server: socket # socket to vcmiserver
@@ -26,6 +26,7 @@ class Session:
     players: list # list of sockets of players, joined to the session
     connections: list # list of GameConnections for vcmiclient/vcmiserver (game mode)
     pipes: dict #dictionary of pipes for speed up
+    timer: Timer # timers to verify if session is alive
 
     def __init__(self) -> None:
         self.name = ""
@@ -33,6 +34,7 @@ class Session:
         self.clients_uuid = []
         self.connections = []
         self.pipes = {}
+        self.timer = None
         pass
 
     def addConnection(self, conn: socket, isServer: bool, prevMessages: list):
@@ -70,10 +72,6 @@ class Session:
             opposite = self.getPipe(conn)
             self.pipes.pop(self.getPipe(conn), None)
             self.pipes.pop(conn, None)
-            try:
-                opposite.close()
-            except Exception as e:
-                pass #continue
 
         newConnections = []
         for c in self.connections:
