@@ -9,7 +9,7 @@ from lobby import Lobby, STATS
 # Major version: increase if backword compatibility with old protocols is not supported
 # Minor version: increase if new functional changes appeared, more functionality in the protocol
 # Patch version: increase for any internal change/bugfix, not related to vcmi functionality
-PROXYSERVER_VERSION = "0.6.1"
+PROXYSERVER_VERSION = "0.6.2"
 
 LOG_LEVEL = logging.INFO
 LOG_LEVELS = {
@@ -100,7 +100,7 @@ def handle_disconnection(sender: Sender):
                     if len(sender.client.session.connections) == 0:
                         if sender.client.session.timer != None:
                             sender.client.session.timer.cancel()
-                        sender.client.session.timer = Timer(300, removeSession, args = [sender.client.session])
+                        sender.client.session.timer = Timer(1800, removeSession, args = [sender.client.session])
                         sender.client.session.timer.start()
                         
                     lobby.senders.remove(sender)
